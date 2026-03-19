@@ -69,29 +69,37 @@ export default function ManualDrawer() {
     leafletMarkersRef.current = [];
   }, [leafletMap]);
 
-  // === 네이버 지도 클릭 핸들러 ===
+  // === 네이버 지도 클릭 핸들러 (디바운스로 더블클릭 구분) ===
   useEffect(() => {
     if (engine !== 'naver' || !naverMap || !isDrawing) return;
 
-    const clickListener = naver.maps.Event.addListener(naverMap, 'click', (e: { coord: naver.maps.LatLng }) => {
-      const lat = e.coord.lat();
-      const lng = e.coord.lng();
-      const nodeId = addNode(lat, lng);
-      addDrawingNode(nodeId);
+    // 더블클릭 줌 비활성화
+    naverMap.setOptions({ disableDoubleClickZoom: true });
+    let clickTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // 마커 추가
-      const marker = new naver.maps.Marker({
-        position: e.coord,
-        map: naverMap,
-        icon: {
-          content: `<div style="width:10px;height:10px;border-radius:50%;background:${modeToColor[mode]||'#3B82F6'};border:2px solid white;"></div>`,
-          anchor: new naver.maps.Point(5, 5),
-        },
-      });
-      naverMarkersRef.current.push(marker);
+    const clickListener = naver.maps.Event.addListener(naverMap, 'click', (e: { coord: naver.maps.LatLng }) => {
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        const lat = e.coord.lat();
+        const lng = e.coord.lng();
+        const nodeId = addNode(lat, lng);
+        addDrawingNode(nodeId);
+
+        // 마커 추가
+        const marker = new naver.maps.Marker({
+          position: e.coord,
+          map: naverMap,
+          icon: {
+            content: `<div style="width:10px;height:10px;border-radius:50%;background:${modeToColor[mode]||'#3B82F6'};border:2px solid white;"></div>`,
+            anchor: new naver.maps.Point(5, 5),
+          },
+        });
+        naverMarkersRef.current.push(marker);
+      }, 300);
     });
 
     const dblClickListener = naver.maps.Event.addListener(naverMap, 'dblclick', () => {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
       completeWay();
     });
 
@@ -111,6 +119,8 @@ export default function ManualDrawer() {
       naver.maps.Event.removeListener(clickListener);
       naver.maps.Event.removeListener(dblClickListener);
       document.removeEventListener('keydown', onKeyDown);
+      if (clickTimer) clearTimeout(clickTimer);
+      naverMap.setOptions({ disableDoubleClickZoom: false });
     };
   }, [naverMap, engine, isDrawing, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 

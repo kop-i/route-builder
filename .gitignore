@@ -1,6 +1,9 @@
 # Dependencies
 node_modules
 
+# 노드링크 원본 데이터 (대용량)
+[2026-01-13]NODELINKDATA/
+
 # Build
 dist
 dist-ssr

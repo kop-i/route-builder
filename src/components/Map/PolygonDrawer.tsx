@@ -42,35 +42,48 @@ export default function PolygonDrawer() {
       clearServiceArea();
       naverClickPoints.current = [];
 
+      // 더블클릭 줌 비활성화 (그리기 모드에서)
+      naverMap.setOptions({ disableDoubleClickZoom: true });
+
+      // 클릭 디바운스: 더블클릭과 구분하기 위해 300ms 대기
+      let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
       const clickListener = naver.maps.Event.addListener(naverMap, 'click', (e: { coord: naver.maps.LatLng }) => {
-        naverClickPoints.current.push(e.coord);
+        // 디바운스: 300ms 내 더블클릭이 오면 이 클릭은 무시
+        if (clickTimer) clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => {
+          naverClickPoints.current.push(e.coord);
 
-        // 마커 표시
-        const marker = new naver.maps.Marker({
-          position: e.coord,
-          map: naverMap,
-          icon: {
-            content: '<div style="width:8px;height:8px;border-radius:50%;background:#3B82F6;border:2px solid white;"></div>',
-            anchor: new naver.maps.Point(4, 4),
-          },
-        });
-        naverTempMarkersRef.current.push(marker);
-
-        // 미리보기 라인 업데이트
-        if (naverTempPolylineRef.current) naverTempPolylineRef.current.setMap(null);
-        if (naverClickPoints.current.length >= 2) {
-          naverTempPolylineRef.current = new naver.maps.Polyline({
+          // 마커 표시
+          const marker = new naver.maps.Marker({
+            position: e.coord,
             map: naverMap,
-            path: naverClickPoints.current,
-            strokeColor: '#3B82F6',
-            strokeWeight: 2,
-            strokeStyle: 'shortdash',
+            icon: {
+              content: '<div style="width:8px;height:8px;border-radius:50%;background:#3B82F6;border:2px solid white;"></div>',
+              anchor: new naver.maps.Point(4, 4),
+            },
           });
-        }
+          naverTempMarkersRef.current.push(marker);
+
+          // 미리보기 라인 업데이트
+          if (naverTempPolylineRef.current) naverTempPolylineRef.current.setMap(null);
+          if (naverClickPoints.current.length >= 2) {
+            naverTempPolylineRef.current = new naver.maps.Polyline({
+              map: naverMap,
+              path: naverClickPoints.current,
+              strokeColor: '#3B82F6',
+              strokeWeight: 2,
+              strokeStyle: 'shortdash',
+            });
+          }
+        }, 300);
       });
 
       // 더블클릭으로 polygon 완성
       const dblClickListener = naver.maps.Event.addListener(naverMap, 'dblclick', () => {
+        // 디바운스된 클릭 취소
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+
         const points = naverClickPoints.current;
         if (points.length < 3) return;
 
@@ -108,6 +121,9 @@ export default function PolygonDrawer() {
         naver.maps.Event.removeListener(clickListener);
         naver.maps.Event.removeListener(dblClickListener);
         document.removeEventListener('keydown', onKeyDown);
+        if (clickTimer) clearTimeout(clickTimer);
+        // 더블클릭 줌 복원
+        naverMap.setOptions({ disableDoubleClickZoom: false });
       };
     }
   }, [naverMap, engine, mode]); // eslint-disable-line react-hooks/exhaustive-deps
