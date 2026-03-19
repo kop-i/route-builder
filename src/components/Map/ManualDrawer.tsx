@@ -1,33 +1,24 @@
 /**
- * ManualDrawer - 수동 경로 그리기
+ * ManualDrawer - 수동 경로 그리기 (네이버 + Leaflet 양쪽 지원)
  *
  * [기능]
  * - draw_sidewalk / draw_crosswalk / draw_sideroad 모드에서 활성화
  * - 지도 클릭 → 노드 생성 → 실시간 미리보기 라인 표시
  * - 더블클릭 또는 Enter → 웨이 완성 및 저장
  * - ESC → 그리기 취소
- *
- * [워크플로우]
- * 1. Toolbar에서 "인도 그리기" 선택
- * 2. 지도 위를 클릭하면 노드가 찍힘 (파란 점)
- * 3. 클릭할 때마다 이전 노드와 연결하는 라인이 미리보기로 표시
- * 4. 더블클릭하면 웨이가 완성되어 pathStore에 저장
- * 5. 다시 클릭하면 새 웨이 시작
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import { useMapStore } from '@/stores/mapStore';
 import { usePathStore } from '@/stores/pathStore';
 import { useEditorStore } from '@/stores/editorStore';
 
-// 모드별 도로 유형 매핑
 const modeToRoadType: Record<string, string> = {
   draw_sidewalk: 'sidewalk',
   draw_crosswalk: 'crosswalk',
   draw_sideroad: 'sideroad',
 };
 
-// 모드별 선 색상
 const modeToColor: Record<string, string> = {
   draw_sidewalk: '#3B82F6',
   draw_crosswalk: '#EF4444',
@@ -35,30 +26,103 @@ const modeToColor: Record<string, string> = {
 };
 
 export default function ManualDrawer() {
+  const naverMap = useMapStore((s) => s.naverMap);
   const leafletMap = useMapStore((s) => s.leafletMap);
   const engine = useMapStore((s) => s.engine);
   const { mode, drawingNodeIds, addDrawingNode, finishDrawing, cancelDrawing } = useEditorStore();
-  const { addNode, addWay, nodes } = usePathStore();
+  const { addNode, addWay, removeNode } = usePathStore();
 
-  // 미리보기 라인 + 노드 마커
-  const previewLineRef = useRef<L.Polyline | null>(null);
-  const previewMarkersRef = useRef<L.CircleMarker[]>([]);
+  // 네이버 오버레이 refs
+  const naverPolylinesRef = useRef<naver.maps.Polyline[]>([]);
+  const naverMarkersRef = useRef<naver.maps.Marker[]>([]);
+
+  // Leaflet 오버레이 refs
+  const leafletLineRef = useRef<L.Polyline | null>(null);
+  const leafletMarkersRef = useRef<L.CircleMarker[]>([]);
 
   const isDrawing = mode === 'draw_sidewalk' || mode === 'draw_crosswalk' || mode === 'draw_sideroad';
 
-  // === 클릭 → 노드 생성 ===
+  // === 웨이 완성 ===
+  const completeWay = useCallback(() => {
+    const nodeIds = finishDrawing();
+    if (nodeIds.length >= 2) {
+      const roadType = modeToRoadType[mode] || 'sidewalk';
+      addWay(nodeIds, [{ k: 'road_type', v: roadType }]);
+      console.log(`✅ ${roadType} 웨이 완성: 노드 ${nodeIds.length}개`);
+    }
+    clearAllOverlays();
+  }, [mode, finishDrawing, addWay]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // === 모든 미리보기 오버레이 제거 ===
+  const clearAllOverlays = useCallback(() => {
+    // 네이버
+    naverPolylinesRef.current.forEach(p => p.setMap(null));
+    naverPolylinesRef.current = [];
+    naverMarkersRef.current.forEach(m => m.setMap(null));
+    naverMarkersRef.current = [];
+    // Leaflet
+    if (leafletLineRef.current && leafletMap) {
+      leafletMap.removeLayer(leafletLineRef.current);
+      leafletLineRef.current = null;
+    }
+    leafletMarkersRef.current.forEach(m => leafletMap?.removeLayer(m));
+    leafletMarkersRef.current = [];
+  }, [leafletMap]);
+
+  // === 네이버 지도 클릭 핸들러 ===
   useEffect(() => {
-    if (engine !== 'leaflet' || !leafletMap || !isDrawing) return;
+    if (engine !== 'naver' || !naverMap || !isDrawing) return;
 
-    // 지도 드래그 비활성화하지 않음 (클릭과 드래그 구분)
-    const onClick = (e: L.LeafletMouseEvent) => {
-      const { lat, lng } = e.latlng;
-
-      // 노드 생성
+    const clickListener = naver.maps.Event.addListener(naverMap, 'click', (e: { coord: naver.maps.LatLng }) => {
+      const lat = e.coord.lat();
+      const lng = e.coord.lng();
       const nodeId = addNode(lat, lng);
       addDrawingNode(nodeId);
 
-      // 미리보기 마커 추가
+      // 마커 추가
+      const marker = new naver.maps.Marker({
+        position: e.coord,
+        map: naverMap,
+        icon: {
+          content: `<div style="width:10px;height:10px;border-radius:50%;background:${modeToColor[mode]||'#3B82F6'};border:2px solid white;"></div>`,
+          anchor: new naver.maps.Point(5, 5),
+        },
+      });
+      naverMarkersRef.current.push(marker);
+    });
+
+    const dblClickListener = naver.maps.Event.addListener(naverMap, 'dblclick', () => {
+      completeWay();
+    });
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        for (const id of useEditorStore.getState().drawingNodeIds) {
+          removeNode(id);
+        }
+        cancelDrawing();
+        clearAllOverlays();
+      }
+      if (e.key === 'Enter') completeWay();
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      naver.maps.Event.removeListener(clickListener);
+      naver.maps.Event.removeListener(dblClickListener);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [naverMap, engine, isDrawing, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // === Leaflet 지도 클릭 핸들러 ===
+  useEffect(() => {
+    if (engine !== 'leaflet' || !leafletMap || !isDrawing) return;
+
+    const onClick = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      const nodeId = addNode(lat, lng);
+      addDrawingNode(nodeId);
+
       const marker = L.circleMarker([lat, lng], {
         radius: 5,
         color: modeToColor[mode] || '#3B82F6',
@@ -66,30 +130,23 @@ export default function ManualDrawer() {
         fillOpacity: 1,
         weight: 2,
       }).addTo(leafletMap);
-      previewMarkersRef.current.push(marker);
+      leafletMarkersRef.current.push(marker);
     };
 
-    // 더블클릭 → 웨이 완성
-    const onDblClick = () => {
-      completeWay();
-    };
+    const onDblClick = () => completeWay();
 
     leafletMap.on('click', onClick);
     leafletMap.on('dblclick', onDblClick);
 
-    // ESC → 취소
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        clearPreview();
-        // 그리기 중인 노드 삭제 (pathStore에서)
-        for (const id of drawingNodeIds) {
-          usePathStore.getState().removeNode(id);
+        for (const id of useEditorStore.getState().drawingNodeIds) {
+          removeNode(id);
         }
         cancelDrawing();
+        clearAllOverlays();
       }
-      if (e.key === 'Enter') {
-        completeWay();
-      }
+      if (e.key === 'Enter') completeWay();
     };
     document.addEventListener('keydown', onKeyDown);
 
@@ -102,65 +159,46 @@ export default function ManualDrawer() {
 
   // === 미리보기 라인 업데이트 ===
   useEffect(() => {
-    if (engine !== 'leaflet' || !leafletMap) return;
-
-    // 기존 미리보기 라인 제거
-    if (previewLineRef.current) {
-      leafletMap.removeLayer(previewLineRef.current);
-      previewLineRef.current = null;
-    }
-
     if (!isDrawing || drawingNodeIds.length < 2) return;
 
-    // 노드 좌표 조회
     const currentNodes = usePathStore.getState().nodes;
-    const latLngs: L.LatLngTuple[] = drawingNodeIds
+    const coords = drawingNodeIds
       .map(id => currentNodes.find(n => n.id === id))
-      .filter((n): n is NonNullable<typeof n> => n !== undefined)
-      .map(n => [n.lat, n.lon] as L.LatLngTuple);
+      .filter((n): n is NonNullable<typeof n> => n !== undefined);
 
-    if (latLngs.length < 2) return;
+    if (coords.length < 2) return;
+    const color = modeToColor[mode] || '#3B82F6';
 
-    // 미리보기 라인 그리기
-    previewLineRef.current = L.polyline(latLngs, {
-      color: modeToColor[mode] || '#3B82F6',
-      weight: 3,
-      opacity: 0.7,
-      dashArray: '8 4',
-    }).addTo(leafletMap);
-  }, [drawingNodeIds, leafletMap, engine, isDrawing, mode]);
+    if (engine === 'naver' && naverMap) {
+      // 기존 라인 제거
+      naverPolylinesRef.current.forEach(p => p.setMap(null));
+      naverPolylinesRef.current = [];
 
-  // === 모드 변경 시 미리보기 정리 ===
+      const path = coords.map(c => new naver.maps.LatLng(c.lat, c.lon));
+      const polyline = new naver.maps.Polyline({
+        map: naverMap,
+        path,
+        strokeColor: color,
+        strokeWeight: 3,
+        strokeOpacity: 0.7,
+        strokeStyle: 'shortdash',
+      });
+      naverPolylinesRef.current.push(polyline);
+    }
+
+    if (engine === 'leaflet' && leafletMap) {
+      if (leafletLineRef.current) leafletMap.removeLayer(leafletLineRef.current);
+      const latLngs = coords.map(c => [c.lat, c.lon] as L.LatLngTuple);
+      leafletLineRef.current = L.polyline(latLngs, {
+        color, weight: 3, opacity: 0.7, dashArray: '8 4',
+      }).addTo(leafletMap);
+    }
+  }, [drawingNodeIds, naverMap, leafletMap, engine, isDrawing, mode]);
+
+  // === 모드 변경 시 정리 ===
   useEffect(() => {
-    if (!isDrawing) {
-      clearPreview();
-    }
-  }, [isDrawing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function completeWay() {
-    const nodeIds = finishDrawing();
-
-    if (nodeIds.length >= 2) {
-      const roadType = modeToRoadType[mode] || 'sidewalk';
-      addWay(nodeIds, [{ k: 'road_type', v: roadType }]);
-      console.log(`✅ ${roadType} 웨이 완성: 노드 ${nodeIds.length}개`);
-    }
-
-    clearPreview();
-  }
-
-  function clearPreview() {
-    if (leafletMap) {
-      if (previewLineRef.current) {
-        leafletMap.removeLayer(previewLineRef.current);
-        previewLineRef.current = null;
-      }
-      for (const m of previewMarkersRef.current) {
-        leafletMap.removeLayer(m);
-      }
-    }
-    previewMarkersRef.current = [];
-  }
+    if (!isDrawing) clearAllOverlays();
+  }, [isDrawing, clearAllOverlays]);
 
   return null;
 }
