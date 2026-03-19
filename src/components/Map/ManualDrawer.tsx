@@ -210,5 +210,24 @@ export default function ManualDrawer() {
     if (!isDrawing) clearAllOverlays();
   }, [isDrawing, clearAllOverlays]);
 
-  return null;
+  // === UI: 웨이 완성 버튼 ===
+  if (!isDrawing || drawingNodeIds.length < 2) return null;
+
+  const color = modeToColor[mode] || '#3B82F6';
+  const label = mode === 'draw_sidewalk' ? '인도' : mode === 'draw_crosswalk' ? '건널목' : '이면도로';
+
+  return (
+    <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-2">
+      <div className="bg-black/60 text-white text-xs px-3 py-1.5 rounded-full">
+        {drawingNodeIds.length}점 — 더블클릭, Enter, 또는 아래 버튼으로 완성
+      </div>
+      <button
+        onClick={() => completeWay()}
+        className="text-white px-5 py-2 rounded-xl shadow-xl text-sm font-bold hover:opacity-90 transition-all"
+        style={{ backgroundColor: color }}
+      >
+        ✅ {label} 웨이 완성 ({drawingNodeIds.length}점)
+      </button>
+    </div>
+  );
 }
