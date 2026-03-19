@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 전체 화면 레이아웃 (지도가 뷰포트 전체를 차지) */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 네이버 지도 로고/저작권 텍스트 z-index 충돌 방지 */
+.naver-map-container {
+  position: relative;
+}
