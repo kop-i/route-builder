@@ -1,8 +1,8 @@
 # Dependencies
 node_modules
 
-# 노드링크 원본 데이터 (대용량)
-[2026-01-13]NODELINKDATA/
+# 노드링크 원본 데이터 (대용량) - 대괄호 이스케이프
+\[2026-01-13\]NODELINKDATA/
 
 # Build
 dist

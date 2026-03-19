@@ -25,7 +25,8 @@ export default function GenerateButton() {
 
     try {
       setGenerationProgress('노드링크 데이터 로드 중...');
-      const result = await loadNodeLinkData();
+      const area = usePathStore.getState().serviceArea;
+      const result = await loadNodeLinkData(area?.polygon);
 
       setPathData({ nodes: result.nodes, ways: result.ways });
       setGenerationProgress(

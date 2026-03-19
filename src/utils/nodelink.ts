@@ -75,10 +75,36 @@ function classifyNodeLinkRoad(rank: string, lanes: number): RoadType | null {
 }
 
 /**
+ * 점이 polygon 내부에 있는지 판별 (Ray Casting Algorithm)
+ */
+function isPointInPolygon(lat: number, lng: number, polygon: { lat: number; lng: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].lng, yi = polygon[i].lat;
+    const xj = polygon[j].lng, yj = polygon[j].lat;
+    const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * 라인의 어느 점이라도 polygon 내부에 있는지 확인
+ */
+function isLineInPolygon(coords: number[][], polygon: { lat: number; lng: number }[]): boolean {
+  // 중간점 포함 여러 점을 체크 (시작, 중간, 끝)
+  for (const [lon, lat] of coords) {
+    if (isPointInPolygon(lat, lon, polygon)) return true;
+  }
+  return false;
+}
+
+/**
  * 서비스 면적(polygon) 내의 노드링크 데이터 로드
- * 현재는 public/data/yeoksam_links.geojson 사용 (향후 동적 로드)
+ * polygon이 주어지면 해당 영역 내 도로만 필터링
  */
 export async function loadNodeLinkData(
+  polygon?: { lat: number; lng: number }[],
   dataUrl = '/data/yeoksam_links.geojson'
 ): Promise<NodeLinkResult> {
   const response = await fetch(dataUrl);
@@ -95,6 +121,7 @@ export async function loadNodeLinkData(
   let sideroadCount = 0;
   let mainRoadCount = 0;
   let excludedCount = 0;
+  let filteredOutCount = 0;
 
   function getOrCreateNode(lon: number, lat: number): number {
     const key = `${lat.toFixed(6)}_${lon.toFixed(6)}`;
@@ -123,11 +150,17 @@ export async function loadNodeLinkData(
     // 이면도로만 포함 (차도는 인도 자동 생성이 준비될 때까지 제외)
     if (roadType === 'road') {
       mainRoadCount++;
-      continue; // 향후 인도 offset 생성 시 활용
+      continue;
     }
 
     const coords = feature.geometry.coordinates;
     if (coords.length < 2) continue;
+
+    // polygon 영역 필터링: 라인의 어느 점이라도 polygon 내부에 있어야 포함
+    if (polygon && !isLineInPolygon(coords, polygon)) {
+      filteredOutCount++;
+      continue;
+    }
 
     const nodeRefs: number[] = [];
     for (const [lon, lat] of coords) {
@@ -151,7 +184,7 @@ export async function loadNodeLinkData(
     sideroadCount++;
   }
 
-  console.log(`📊 노드링크: 이면도로 ${sideroadCount}, 차도 ${mainRoadCount} (제외), 고속도로 등 ${excludedCount} (제외)`);
+  console.log(`📊 노드링크: 이면도로 ${sideroadCount}, 차도 ${mainRoadCount} (제외), 고속도로 등 ${excludedCount} (제외), 영역 밖 ${filteredOutCount} (필터링)`);
 
   return {
     nodes,
