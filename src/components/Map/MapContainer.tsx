@@ -37,7 +37,7 @@ function loadNaverScript(): Promise<boolean> {
     const script = document.createElement('script');
     // 2025년 업그레이드 이후: ncpClientId → ncpKeyId 로 파라미터명 변경됨
     // panorama 서브모듈: 네이버 로드뷰 지원
-    script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${NAVER_CLIENT_ID}&submodules=panorama`;
+    script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${NAVER_CLIENT_ID}&submodules=panorama,geocoder`;
     script.async = true;
     script.onload = () => { setTimeout(() => { clearTimeout(timer); resolve(!!window.naver?.maps?.Map); }, 300); };
     script.onerror = () => { clearTimeout(timer); resolve(false); };

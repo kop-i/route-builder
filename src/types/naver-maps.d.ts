@@ -203,6 +203,22 @@ declare namespace naver.maps {
   }
 
   // ============================================
+  // Service (Geocoding 등)
+  // ============================================
+
+  namespace Service {
+    function geocode(
+      options: { query: string },
+      callback: (status: string, response: unknown) => void
+    ): void;
+
+    const Status: {
+      OK: string;
+      ERROR: string;
+    };
+  }
+
+  // ============================================
   // DrawingManager (서비스 면적 그리기용)
   // ============================================
 
