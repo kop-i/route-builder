@@ -20,7 +20,7 @@ export default function Toolbar() {
   if (!isMapReady) return null;
 
   return (
-    <div className="absolute top-14 left-3 z-[1000] flex flex-col gap-1.5" style={{ maxHeight: 'calc(100vh - 80px)', overflowY: 'auto' }}>
+    <div className="absolute top-14 left-3 z-[1000] flex flex-col gap-1.5" style={{ maxHeight: 'calc(100vh - 80px)' }}>
       {/* 도구 버튼 */}
       <div className="bg-white rounded-lg shadow-lg p-1.5 flex flex-col gap-0.5">
         <Btn label="🖐️" tip="보기" shortcut="V" active={mode === 'view'} onClick={() => setMode('view')} />
@@ -103,8 +103,8 @@ function Btn({ label, tip, shortcut, active, onClick, disabled = false }: {
     >
       {label}
       {/* 호버 시 툴팁 */}
-      <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-        {tip} <kbd className="bg-gray-600 px-1 rounded">{shortcut}</kbd>
+      <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-[1100] shadow-lg">
+        {tip} <kbd className="bg-gray-600 px-1 rounded ml-1">{shortcut}</kbd>
       </span>
     </button>
   );
