@@ -14,7 +14,7 @@ import { useMapStore } from '@/stores/mapStore';
 import { fetchRoadsInArea } from '@/utils/overpass';
 import { generatePathsFromOverpass } from '@/utils/pathGenerator';
 import { captureNaverSatelliteImages } from '@/utils/naverSatellite';
-import { analyzeRoadsOnSatelliteImage, applyAnalysisResults, type RoadForAnalysis, type RoadAnalysisResult } from '@/utils/aiRoadClassifier';
+import { analyzeRoadWithDualView, applyAnalysisResults, type RoadForAnalysis, type RoadAnalysisResult } from '@/utils/aiRoadClassifier';
 
 const STEPS = [
   { num: 1, title: '도로 불러오기', desc: 'OSM에서 이면도로, 차도, 건널목을 수집합니다' },
@@ -90,13 +90,14 @@ export default function PipelinePanel() {
   }, [serviceArea, setStepStatus, setProgress, setPathData, clearPathData]);
 
   // ============================================
-  // Step 2: AI 종합 분석 (도로 재분류 + 인도 발견 + 건널목 발견)
+  // Step 2: AI 이중 검증 (위성 + 로드뷰) — 도로별 개별 분석
   // ============================================
   const runStep2 = useCallback(async () => {
     if (ways.length === 0) return;
     setStepStatus('step2', 'running');
 
     try {
+      // 위성 이미지 캡처
       setProgress('네이버 위성 캡처 중...');
       const polygon = serviceArea?.polygon;
       if (!polygon) return;
@@ -106,68 +107,74 @@ export default function PipelinePanel() {
       });
 
       if (satImages.length === 0) {
-        setProgress('⚠️ 위성 캡처 실패. 🛰️ 위성 모드로 먼저 전환 후 재시도하세요!');
+        setProgress('⚠️ 위성 캡처 실패. 🛰️ 위성 모드로 먼저 전환 후 재시도!');
         setStepStatus('step2', 'error');
         return;
       }
 
+      // 도로별 분석 준비
       const nodeMap = new Map(nodes.map(n => [n.id, { lat: n.lat, lon: n.lon }]));
-      const allResults: RoadAnalysisResult[] = [];
+      const allRoads: (RoadForAnalysis & { satIdx: number })[] = [];
 
-      for (let i = 0; i < satImages.length; i++) {
-        setProgress(`AI 종합 분석 중 (${i + 1}/${satImages.length}) — Sonnet`);
-        const sat = satImages[i];
+      for (let si = 0; si < satImages.length; si++) {
+        const sat = satImages[si];
+        for (const way of ways) {
+          const midRef = way.nodeRefs[Math.floor(way.nodeRefs.length / 2)];
+          const mid = nodeMap.get(midRef);
+          if (!mid) continue;
+          if (mid.lat < sat.bounds.south || mid.lat > sat.bounds.north ||
+              mid.lon < sat.bounds.west || mid.lon > sat.bounds.east) continue;
 
-        const roadsInArea: RoadForAnalysis[] = ways
-          .filter(way => {
-            const midRef = way.nodeRefs[Math.floor(way.nodeRefs.length / 2)];
-            const mid = nodeMap.get(midRef);
-            if (!mid) return false;
-            return mid.lat >= sat.bounds.south && mid.lat <= sat.bounds.north
-              && mid.lon >= sat.bounds.west && mid.lon <= sat.bounds.east;
-          })
-          .map(way => ({
+          allRoads.push({
             wayId: way.id,
             coords: way.nodeRefs.map(ref => nodeMap.get(ref)).filter((c): c is { lat: number; lon: number } => c !== undefined),
             currentType: way.tags.find(t => t.k === 'road_type')?.v || 'sideroad',
-          }));
-
-        if (roadsInArea.length === 0) continue;
-
-        try {
-          const results = await analyzeRoadsOnSatelliteImage(sat, roadsInArea);
-          allResults.push(...results);
-
-          // 실시간 로그
-          const reclassified = results.filter(r => {
-            const orig = roadsInArea.find(road => road.wayId === r.wayId);
-            return orig && orig.currentType !== r.roadType;
-          }).length;
-          const withSidewalk = results.filter(r => r.sidewalk.left || r.sidewalk.right).length;
-          const crosswalks = results.filter(r => r.roadType === 'crosswalk').length;
-          console.log(`🤖 청크 ${i + 1}: 분석 ${results.length}개, 재분류 ${reclassified}개, 인도발견 ${withSidewalk}개, 건널목 ${crosswalks}개`);
-        } catch (err) {
-          console.warn(`⚠️ 청크 ${i + 1} 실패:`, err);
+            satIdx: si,
+          });
         }
-
-        if (i < satImages.length - 1) await new Promise(r => setTimeout(r, 500));
       }
 
+      setProgress(`${allRoads.length}개 도로 AI 분석 시작 (위성 + 로드뷰)...`);
+
+      // 도로별 개별 분석 (위성 + 로드뷰)
+      const allResults: RoadAnalysisResult[] = [];
+      for (let i = 0; i < allRoads.length; i++) {
+        const road = allRoads[i];
+        setProgress(`AI 분석 (${i + 1}/${allRoads.length}) — 위성+로드뷰 (Sonnet)`);
+
+        try {
+          const result = await analyzeRoadWithDualView(satImages[road.satIdx], road);
+          allResults.push(result);
+
+          const changed = result.roadType !== road.currentType ? '🔄' : '✓';
+          const sw = (result.sidewalk.left ? 'L' : '') + (result.sidewalk.right ? 'R' : '') || '-';
+          console.log(`${changed} 도로 ${i + 1}: ${road.currentType}→${result.roadType}, 인도:${sw}, ${result.notes}`);
+        } catch (err) {
+          console.warn(`⚠️ 도로 ${i + 1} 실패:`, err);
+        }
+
+        // rate limit (Sonnet은 느리므로 간격 줄임)
+        if (i < allRoads.length - 1) await new Promise(r => setTimeout(r, 200));
+      }
+
+      // 결과 적용
       if (allResults.length > 0) {
         applyAnalysisResults(ways, allResults);
         setPathData({ nodes: [...nodes], ways: [...ways] });
       }
 
       // 통계
-      const reclassifiedCount = allResults.length;
+      const reclassified = allResults.filter((r, i) => r.roadType !== allRoads[i]?.currentType).length;
       const sidewalkFound = allResults.filter(r => r.sidewalk.left || r.sidewalk.right).length;
-      const crosswalkFound = allResults.filter(r => r.roadType === 'crosswalk').length;
+      const sidewalkCount = ways.filter(w => w.tags.some(t => t.k === 'road_type' && t.v === 'sidewalk')).length;
+      const crosswalkCount = ways.filter(w => w.tags.some(t => t.k === 'road_type' && t.v === 'crosswalk')).length;
       const sideroadCount = ways.filter(w => w.tags.some(t => t.k === 'road_type' && t.v === 'sideroad')).length;
       const roadCount = ways.filter(w => w.tags.some(t => t.k === 'road_type' && t.v === 'road')).length;
 
       setProgress(
-        `AI 분석 완료! ${reclassifiedCount}개 도로 분석\n` +
-        `이면도로 ${sideroadCount}, 차도 ${roadCount}, 인도 발견 ${sidewalkFound}개, 건널목 ${crosswalkFound}개`
+        `AI 분석 완료! ${allResults.length}개 도로 (재분류 ${reclassified})\n` +
+        `인도 ${sidewalkCount}, 이면도로 ${sideroadCount}, 차도 ${roadCount}, 건널목 ${crosswalkCount}\n` +
+        `인도 발견(옆) ${sidewalkFound}개`
       );
       setStepStatus('step2', 'done');
     } catch (error) {
