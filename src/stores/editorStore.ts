@@ -32,6 +32,7 @@ interface EditorState {
     sidewalk: boolean;
     crosswalk: boolean;
     sideroad: boolean;
+    road: boolean;
     nodes: boolean;
   };
 
@@ -59,6 +60,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     sidewalk: true,
     crosswalk: true,
     sideroad: true,
+    road: true,
     nodes: true,
   },
 

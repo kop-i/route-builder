@@ -146,6 +146,12 @@ export default function Toolbar() {
             onClick={() => toggleLayer('sideroad')}
           />
           <LayerToggle
+            label="차도"
+            color="#9CA3AF"
+            active={layerVisibility.road}
+            onClick={() => toggleLayer('road')}
+          />
+          <LayerToggle
             label="노드"
             color="#6B7280"
             active={layerVisibility.nodes}

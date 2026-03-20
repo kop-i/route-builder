@@ -1,23 +1,15 @@
 /**
- * 국토교통부 노드링크 데이터 로더
+ * 국토교통부 노드링크 데이터 로더 v4
  *
- * [데이터 구조]
- * - GeoJSON 형태로 public/data/ 에 저장
- * - 링크: LineString (도로 구간)
- * - 노드: Point (교차점)
+ * [제1원칙] 선택한 범위(polygon)에만 경로 표시
+ * [제2원칙] 이면도로/차도 구분 표시 (ROAD_RANK + LANES + MAX_SPD 기반)
  *
- * [ROAD_RANK 분류]
- * 101: 고속도로 → 제외
- * 102: 도시고속 → 제외
- * 103: 일반국도 → 차도
- * 104: 특별/광역시도 → 차도 또는 이면도로 (LANES 기반)
- * 105: 국가지원지방도 → 차도
- * 106: 지방도 → 차도/이면도로
- * 107: 기타도로 → 이면도로
+ * [분류 기준]
+ * 이면도로: ROAD_RANK=107 또는 (LANES=1이고 MAX_SPD<=30)
+ * 차도: 그 외 (ROAD_RANK 103~106, LANES>=2, MAX_SPD>=40)
  */
-import type { OsmNode, OsmWay, RoadType } from '@/types/osm';
+import type { OsmNode, OsmWay } from '@/types/osm';
 
-/** GeoJSON Feature from nodelink */
 interface NodeLinkFeature {
   type: 'Feature';
   properties: {
@@ -30,10 +22,7 @@ interface NodeLinkFeature {
     MAX_SPD: number;
     LENGTH: number;
   };
-  geometry: {
-    type: 'LineString';
-    coordinates: number[][];
-  };
+  geometry: { type: 'LineString'; coordinates: number[][] };
 }
 
 interface NodeLinkCollection {
@@ -41,68 +30,60 @@ interface NodeLinkCollection {
   features: NodeLinkFeature[];
 }
 
-/** 노드링크 로드 결과 */
 export interface NodeLinkResult {
   nodes: OsmNode[];
   ways: OsmWay[];
   stats: {
     totalLinks: number;
-    sideroadLinks: number;
-    mainRoadLinks: number;
-    excludedLinks: number;
+    sideroadCount: number;
+    roadCount: number;
+    filteredOut: number;
     totalNodes: number;
     totalWays: number;
   };
 }
 
-/**
- * ROAD_RANK → Route Builder RoadType 변환
- * 로봇이 주행 가능한 도로만 포함
- */
-function classifyNodeLinkRoad(rank: string, lanes: number): RoadType | null {
-  switch (rank) {
-    case '101': return null;  // 고속도로 → 제외
-    case '102': return null;  // 도시고속 → 제외
-    case '103': return 'road'; // 일반국도 → 차도
-    case '104': // 특별/광역시도
-      return lanes <= 1 ? 'sideroad' : 'road';
-    case '105': return 'road'; // 국가지원지방도
-    case '106': // 지방도
-      return lanes <= 1 ? 'sideroad' : 'road';
-    case '107': return 'sideroad'; // 기타도로 → 이면도로
-    default: return 'sideroad';
-  }
+// ============================================
+// Polygon 필터링 (bbox 기반 + point-in-polygon 보완)
+// ============================================
+
+interface BBox { south: number; north: number; west: number; east: number }
+
+function polygonToBBox(polygon: { lat: number; lng: number }[]): BBox {
+  const lats = polygon.map(p => p.lat);
+  const lngs = polygon.map(p => p.lng);
+  return { south: Math.min(...lats), north: Math.max(...lats), west: Math.min(...lngs), east: Math.max(...lngs) };
 }
 
-/**
- * 점이 polygon 내부에 있는지 판별 (Ray Casting Algorithm)
- */
-function isPointInPolygon(lat: number, lng: number, polygon: { lat: number; lng: number }[]): boolean {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].lng, yi = polygon[i].lat;
-    const xj = polygon[j].lng, yj = polygon[j].lat;
-    const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
-/**
- * 라인의 어느 점이라도 polygon 내부에 있는지 확인
- */
-function isLineInPolygon(coords: number[][], polygon: { lat: number; lng: number }[]): boolean {
-  // 중간점 포함 여러 점을 체크 (시작, 중간, 끝)
+/** 라인의 bbox가 polygon의 bbox와 겹치는지 확인 */
+function lineIntersectsBBox(coords: number[][], bbox: BBox): boolean {
   for (const [lon, lat] of coords) {
-    if (isPointInPolygon(lat, lon, polygon)) return true;
+    if (lat >= bbox.south && lat <= bbox.north && lon >= bbox.west && lon <= bbox.east) {
+      return true;
+    }
   }
   return false;
 }
 
-/**
- * 서비스 면적(polygon) 내의 노드링크 데이터 로드
- * polygon이 주어지면 해당 영역 내 도로만 필터링
- */
+// ============================================
+// 도로 분류
+// ============================================
+
+function classifyRoad(rank: string, lanes: number, maxSpd: number): 'sideroad' | 'road' {
+  // 기타도로(107)는 무조건 이면도로
+  if (rank === '107') return 'sideroad';
+
+  // 1차선이고 제한속도 30km/h 이하 → 이면도로
+  if (lanes <= 1 && maxSpd <= 30) return 'sideroad';
+
+  // 그 외 → 차도
+  return 'road';
+}
+
+// ============================================
+// 메인 로드 함수
+// ============================================
+
 export async function loadNodeLinkData(
   polygon?: { lat: number; lng: number }[],
   dataUrl = '/data/yeoksam_links.geojson'
@@ -112,90 +93,74 @@ export async function loadNodeLinkData(
 
   const geojson: NodeLinkCollection = await response.json();
 
+  // polygon bbox 계산 (필터링용)
+  const bbox = polygon ? polygonToBBox(polygon) : null;
+
   let nodeId = -500000;
   let wayId = -500000;
   const nodes: OsmNode[] = [];
   const ways: OsmWay[] = [];
   const coordToNodeId = new Map<string, number>();
-
   let sideroadCount = 0;
-  let mainRoadCount = 0;
-  let excludedCount = 0;
-  let filteredOutCount = 0;
+  let roadCount = 0;
+  let filteredOut = 0;
 
   function getOrCreateNode(lon: number, lat: number): number {
     const key = `${lat.toFixed(6)}_${lon.toFixed(6)}`;
     if (coordToNodeId.has(key)) return coordToNodeId.get(key)!;
-
     const id = nodeId--;
     coordToNodeId.set(key, id);
-    nodes.push({
-      id,
-      lat,
-      lon,
-      tags: [{ k: 'plat_node_id', v: String(Math.abs(id)) }],
-    });
+    nodes.push({ id, lat, lon, tags: [{ k: 'plat_node_id', v: String(Math.abs(id)) }] });
     return id;
   }
 
   for (const feature of geojson.features) {
-    const { ROAD_RANK, LANES, ROAD_NAME, LINK_ID } = feature.properties;
-    const roadType = classifyNodeLinkRoad(ROAD_RANK, LANES);
+    const { ROAD_RANK, ROAD_NAME, LINK_ID, LANES, MAX_SPD } = feature.properties;
 
-    if (roadType === null) {
-      excludedCount++;
-      continue;
-    }
-
-    // 이면도로만 포함 (차도는 인도 자동 생성이 준비될 때까지 제외)
-    if (roadType === 'road') {
-      mainRoadCount++;
-      continue;
-    }
+    // 고속도로 제외
+    if (ROAD_RANK === '101' || ROAD_RANK === '102') continue;
 
     const coords = feature.geometry.coordinates;
     if (coords.length < 2) continue;
 
-    // polygon 영역 필터링: 라인의 어느 점이라도 polygon 내부에 있어야 포함
-    if (polygon && !isLineInPolygon(coords, polygon)) {
-      filteredOutCount++;
+    // [제1원칙] polygon bbox 필터링
+    if (bbox && !lineIntersectsBBox(coords, bbox)) {
+      filteredOut++;
       continue;
     }
+
+    // [제2원칙] 이면도로/차도 분류
+    const roadType = classifyRoad(ROAD_RANK, LANES, MAX_SPD);
 
     const nodeRefs: number[] = [];
     for (const [lon, lat] of coords) {
       nodeRefs.push(getOrCreateNode(lon, lat));
     }
-
     if (nodeRefs.length < 2) continue;
 
-    const id = wayId--;
     ways.push({
-      id,
+      id: wayId--,
       nodeRefs,
       tags: [
-        { k: 'plat_way_id', v: String(Math.abs(id)) },
+        { k: 'plat_way_id', v: String(Math.abs(wayId + 1)) },
         { k: 'road_type', v: roadType },
         { k: 'source', v: 'nodelink' },
         { k: 'link_id', v: LINK_ID },
         { k: 'road_name', v: ROAD_NAME },
+        { k: 'road_rank', v: ROAD_RANK },
+        { k: 'lanes', v: String(LANES) },
+        { k: 'max_spd', v: String(MAX_SPD) },
       ],
     });
-    sideroadCount++;
+
+    if (roadType === 'sideroad') sideroadCount++;
+    else roadCount++;
   }
 
-  console.log(`📊 노드링크: 이면도로 ${sideroadCount}, 차도 ${mainRoadCount} (제외), 고속도로 등 ${excludedCount} (제외), 영역 밖 ${filteredOutCount} (필터링)`);
+  console.log(`📊 노드링크: 이면도로 ${sideroadCount}, 차도 ${roadCount}, 영역 밖 ${filteredOut}`);
 
   return {
-    nodes,
-    ways,
-    stats: {
-      totalLinks: geojson.features.length,
-      sideroadLinks: sideroadCount,
-      mainRoadLinks: mainRoadCount,
-      excludedLinks: excludedCount,
-      totalNodes: nodes.length,
-      totalWays: ways.length,
-    },
+    nodes, ways,
+    stats: { totalLinks: geojson.features.length, sideroadCount, roadCount, filteredOut, totalNodes: nodes.length, totalWays: ways.length },
   };
 }

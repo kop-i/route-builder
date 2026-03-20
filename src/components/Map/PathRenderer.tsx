@@ -13,9 +13,10 @@ import { usePathStore } from '@/stores/pathStore';
 import { useEditorStore } from '@/stores/editorStore';
 
 const ROAD_COLORS: Record<string, string> = {
-  sidewalk: '#3B82F6',
-  crosswalk: '#EF4444',
-  sideroad: '#F59E0B',
+  sidewalk: '#3B82F6',    // 파란색 — 인도
+  crosswalk: '#EF4444',   // 빨간색 — 건널목
+  sideroad: '#F59E0B',    // 주황색 — 이면도로
+  road: '#9CA3AF',        // 회색 — 차도
   drive_on_middle: '#8B5CF6',
   default: '#6B7280',
 };
@@ -64,6 +65,7 @@ export default function PathRenderer() {
       if (roadType === 'sidewalk' && !layerVisibility.sidewalk) continue;
       if (roadType === 'crosswalk' && !layerVisibility.crosswalk) continue;
       if (roadType === 'sideroad' && !layerVisibility.sideroad) continue;
+      if (roadType === 'road' && !layerVisibility.road) continue;
 
       const coords = way.nodeRefs
         .map(ref => nodeMap.get(ref))
