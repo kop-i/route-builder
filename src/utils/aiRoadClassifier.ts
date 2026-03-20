@@ -101,7 +101,7 @@ JSON만 반환:
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-5-20241022',
         max_tokens: 1024,
         messages: [{
           role: 'user',
