@@ -20,6 +20,8 @@ declare namespace naver.maps {
     panTo(latlng: LatLng, transitionOptions?: object): void;
     destroy(): void;
     getElement(): HTMLElement;
+    setMapTypeId(mapTypeId: string): void;
+    getMapTypeId(): string;
   }
 
   interface MapOptions {

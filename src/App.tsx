@@ -11,6 +11,7 @@ import SearchPanel from '@/components/Panel/SearchPanel';
 import GenerateButton from '@/components/Panel/GenerateButton';
 import ExportPanel from '@/components/Panel/ExportPanel';
 import RoadViewPanel from '@/components/Panel/RoadViewPanel';
+import MapTypeSelector from '@/components/Panel/MapTypeSelector';
 import { usePathStore } from '@/stores/pathStore';
 import { useMapStore } from '@/stores/mapStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -40,6 +41,7 @@ function App() {
 
       <ExportPanel />
       <RoadViewPanel />
+      <MapTypeSelector />
 
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000]">
         <div className="bg-white/90 backdrop-blur-sm rounded-full px-5 py-2 shadow-lg">
