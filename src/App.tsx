@@ -13,11 +13,15 @@ import ExportPanel from '@/components/Panel/ExportPanel';
 import RoadViewPanel from '@/components/Panel/RoadViewPanel';
 import { usePathStore } from '@/stores/pathStore';
 import { useMapStore } from '@/stores/mapStore';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import './index.css';
 
 function App() {
   const serviceArea = usePathStore((s) => s.serviceArea);
   const isMapReady = useMapStore((s) => s.isMapReady);
+
+  // JOSM 스타일 키보드 단축키 활성화
+  useKeyboardShortcuts();
 
   return (
     <div className="w-screen h-screen overflow-hidden relative">

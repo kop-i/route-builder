@@ -27,48 +27,18 @@ export default function Toolbar() {
 
   return (
     <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2">
-      {/* 메인 도구 버튼들 */}
+      {/* 메인 도구 버튼들 (JOSM 단축키 표시) */}
       <div className="bg-white rounded-lg shadow-lg p-2 flex flex-col gap-1">
-        <ToolButton
-          label="🖐️ 보기"
-          active={mode === 'view'}
-          onClick={() => setMode('view')}
-        />
-        <ToolButton
-          label="📐 면적 그리기"
-          active={mode === 'draw_area'}
-          onClick={() => setMode('draw_area')}
-        />
+        <ToolButton label="🖐️ 보기" shortcut="V" active={mode === 'view'} onClick={() => setMode('view')} />
+        <ToolButton label="📐 면적 그리기" shortcut="B" active={mode === 'draw_area'} onClick={() => setMode('draw_area')} />
         <div className="border-t border-gray-200 my-1" />
         <p className="text-[10px] text-gray-400 px-1">수동 그리기</p>
-        <ToolButton
-          label="🟦 인도 그리기"
-          active={mode === 'draw_sidewalk'}
-          onClick={() => setMode('draw_sidewalk')}
-        />
-        <ToolButton
-          label="🟥 건널목 그리기"
-          active={mode === 'draw_crosswalk'}
-          onClick={() => setMode('draw_crosswalk')}
-        />
-        <ToolButton
-          label="🟧 이면도로 그리기"
-          active={mode === 'draw_sideroad'}
-          onClick={() => setMode('draw_sideroad')}
-        />
+        <ToolButton label="🟦 인도" shortcut="A" active={mode === 'draw_sidewalk'} onClick={() => setMode('draw_sidewalk')} />
+        <ToolButton label="🟥 건널목" shortcut="C" active={mode === 'draw_crosswalk'} onClick={() => setMode('draw_crosswalk')} />
+        <ToolButton label="🟧 이면도로" shortcut="W" active={mode === 'draw_sideroad'} onClick={() => setMode('draw_sideroad')} />
         <div className="border-t border-gray-200 my-1" />
-        <ToolButton
-          label="🔍 선택/삭제"
-          active={mode === 'select'}
-          onClick={() => setMode('select')}
-          disabled={ways.length === 0}
-        />
-        <ToolButton
-          label="✋ 노드 이동"
-          active={mode === 'move_node'}
-          onClick={() => setMode('move_node')}
-          disabled={nodes.length === 0}
-        />
+        <ToolButton label="🔍 선택/삭제" shortcut="S" active={mode === 'select'} onClick={() => setMode('select')} disabled={ways.length === 0} />
+        <ToolButton label="✋ 노드 이동" shortcut="M" active={mode === 'move_node'} onClick={() => setMode('move_node')} disabled={nodes.length === 0} />
       </div>
 
       {/* 통계 정보 */}
@@ -167,11 +137,13 @@ export default function Toolbar() {
 
 function ToolButton({
   label,
+  shortcut,
   active,
   onClick,
   disabled = false,
 }: {
   label: string;
+  shortcut?: string;
   active: boolean;
   onClick: () => void;
   disabled?: boolean;
@@ -181,7 +153,7 @@ function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={`
-        px-3 py-2 text-xs rounded-md transition-colors text-left
+        px-3 py-2 text-xs rounded-md transition-colors text-left flex items-center justify-between gap-2
         ${active
           ? 'bg-blue-500 text-white'
           : disabled
@@ -190,7 +162,12 @@ function ToolButton({
         }
       `}
     >
-      {label}
+      <span>{label}</span>
+      {shortcut && (
+        <kbd className={`text-[9px] px-1 py-0.5 rounded ${active ? 'bg-blue-400' : 'bg-gray-200 text-gray-500'}`}>
+          {shortcut}
+        </kbd>
+      )}
     </button>
   );
 }

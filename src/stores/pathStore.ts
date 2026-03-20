@@ -1,54 +1,76 @@
 /**
  * 경로 데이터 상태 관리 스토어
  * - OSM 노드/웨이 데이터를 관리
- * - 자동 생성, 수동 편집, XML 내보내기의 핵심 데이터
+ * - Undo/Redo 히스토리 지원 (Ctrl+Z / Ctrl+Shift+Z)
  */
 import { create } from 'zustand';
-import type { OsmNode, OsmWay, OsmRelation, ServiceArea, LatLng } from '@/types/osm';
+import type { OsmNode, OsmWay, OsmRelation, ServiceArea } from '@/types/osm';
+
+/** Undo/Redo를 위한 스냅샷 */
+interface PathSnapshot {
+  nodes: OsmNode[];
+  ways: OsmWay[];
+}
+
+const MAX_HISTORY = 50; // 최대 Undo 횟수
 
 interface PathState {
-  // === 경로 데이터 ===
   nodes: OsmNode[];
   ways: OsmWay[];
   relations: OsmRelation[];
-
-  // === 서비스 면적 ===
   serviceArea: ServiceArea | null;
-  isDrawingArea: boolean;       // polygon 그리기 모드 여부
-
-  // === 로딩 상태 ===
-  isGenerating: boolean;        // 자동 경로 생성 중
-  generationProgress: string;   // 생성 진행 메시지
-
-  // === ID 카운터 (로컬 생성 시 음수 ID 부여) ===
+  isDrawingArea: boolean;
+  isGenerating: boolean;
+  generationProgress: string;
   nextNodeId: number;
   nextWayId: number;
 
-  // === 액션: 서비스 면적 ===
+  // Undo/Redo 히스토리
+  history: PathSnapshot[];
+  historyIndex: number;
+
+  // 액션
   setServiceArea: (area: ServiceArea) => void;
   clearServiceArea: () => void;
   setIsDrawingArea: (drawing: boolean) => void;
-
-  // === 액션: 경로 데이터 벌크 설정 ===
   setPathData: (data: { nodes: OsmNode[]; ways: OsmWay[]; relations?: OsmRelation[] }) => void;
   clearPathData: () => void;
-
-  // === 액션: 노드 편집 ===
   addNode: (lat: number, lon: number, tags?: { k: string; v: string }[]) => number;
   updateNodePosition: (id: number, lat: number, lon: number) => void;
   removeNode: (id: number) => void;
-
-  // === 액션: 웨이 편집 ===
   addWay: (nodeRefs: number[], tags?: { k: string; v: string }[]) => number;
   removeWay: (id: number) => void;
-
-  // === 액션: 생성 상태 ===
   setIsGenerating: (generating: boolean) => void;
   setGenerationProgress: (msg: string) => void;
+
+  // Undo/Redo
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+}
+
+/** 현재 상태를 스냅샷으로 저장 */
+function saveSnapshot(state: PathState): PathSnapshot {
+  return {
+    nodes: [...state.nodes],
+    ways: [...state.ways],
+  };
+}
+
+/** 히스토리에 스냅샷 추가 */
+function pushHistory(state: PathState): Partial<PathState> {
+  const snapshot = saveSnapshot(state);
+  const newHistory = state.history.slice(0, state.historyIndex + 1);
+  newHistory.push(snapshot);
+  if (newHistory.length > MAX_HISTORY) newHistory.shift();
+  return {
+    history: newHistory,
+    historyIndex: newHistory.length - 1,
+  };
 }
 
 export const usePathStore = create<PathState>((set, get) => ({
-  // 초기 상태
   nodes: [],
   ways: [],
   relations: [],
@@ -58,96 +80,132 @@ export const usePathStore = create<PathState>((set, get) => ({
   generationProgress: '',
   nextNodeId: -1,
   nextWayId: -1,
+  history: [],
+  historyIndex: -1,
 
-  // === 서비스 면적 ===
   setServiceArea: (area) => set({ serviceArea: area, isDrawingArea: false }),
   clearServiceArea: () => set({ serviceArea: null }),
   setIsDrawingArea: (drawing) => set({ isDrawingArea: drawing }),
 
-  // === 경로 데이터 벌크 설정 ===
-  setPathData: ({ nodes, ways, relations }) => set({
-    nodes,
-    ways,
-    relations: relations ?? [],
-    // 다음 ID는 기존 데이터의 최소 ID보다 1 작게 설정
-    nextNodeId: nodes.length > 0
-      ? Math.min(...nodes.map(n => n.id)) - 1
-      : -1,
-    nextWayId: ways.length > 0
-      ? Math.min(...ways.map(w => w.id)) - 1
-      : -1,
-  }),
+  setPathData: ({ nodes, ways, relations }) => {
+    const state = get();
+    const historyUpdate = pushHistory(state);
+    set({
+      nodes, ways,
+      relations: relations ?? [],
+      nextNodeId: nodes.length > 0 ? Math.min(...nodes.map(n => n.id)) - 1 : -1,
+      nextWayId: ways.length > 0 ? Math.min(...ways.map(w => w.id)) - 1 : -1,
+      ...historyUpdate,
+    });
+  },
 
   clearPathData: () => set({
-    nodes: [],
-    ways: [],
-    relations: [],
-    nextNodeId: -1,
-    nextWayId: -1,
+    nodes: [], ways: [], relations: [],
+    nextNodeId: -1, nextWayId: -1,
+    history: [], historyIndex: -1,
   }),
 
-  // === 노드 편집 ===
   addNode: (lat, lon, tags = []) => {
     const state = get();
+    const historyUpdate = pushHistory(state);
     const newId = state.nextNodeId;
-    const newNode: OsmNode = {
-      id: newId,
-      lat,
-      lon,
-      tags: [
-        { k: 'plat_node_id', v: String(Math.abs(newId)) },
-        ...tags,
-      ],
-    };
     set({
-      nodes: [...state.nodes, newNode],
+      nodes: [...state.nodes, {
+        id: newId, lat, lon,
+        tags: [{ k: 'plat_node_id', v: String(Math.abs(newId)) }, ...tags],
+      }],
       nextNodeId: newId - 1,
+      ...historyUpdate,
     });
     return newId;
   },
 
-  updateNodePosition: (id, lat, lon) => set((state) => ({
-    nodes: state.nodes.map(n =>
-      n.id === id ? { ...n, lat, lon } : n
-    ),
-  })),
+  updateNodePosition: (id, lat, lon) => {
+    const state = get();
+    const historyUpdate = pushHistory(state);
+    set({
+      nodes: state.nodes.map(n => n.id === id ? { ...n, lat, lon } : n),
+      ...historyUpdate,
+    });
+  },
 
-  removeNode: (id) => set((state) => ({
-    // 노드 삭제 시 해당 노드를 참조하는 웨이에서도 제거
-    nodes: state.nodes.filter(n => n.id !== id),
-    ways: state.ways
-      .map(w => ({
-        ...w,
-        nodeRefs: w.nodeRefs.filter(ref => ref !== id),
-      }))
-      // 노드가 2개 미만인 웨이는 삭제 (유효하지 않음)
-      .filter(w => w.nodeRefs.length >= 2),
-  })),
+  removeNode: (id) => {
+    const state = get();
+    const historyUpdate = pushHistory(state);
+    set({
+      nodes: state.nodes.filter(n => n.id !== id),
+      ways: state.ways
+        .map(w => ({ ...w, nodeRefs: w.nodeRefs.filter(ref => ref !== id) }))
+        .filter(w => w.nodeRefs.length >= 2),
+      ...historyUpdate,
+    });
+  },
 
-  // === 웨이 편집 ===
   addWay: (nodeRefs, tags = []) => {
     const state = get();
+    const historyUpdate = pushHistory(state);
     const newId = state.nextWayId;
-    const newWay: OsmWay = {
-      id: newId,
-      nodeRefs,
-      tags: [
-        { k: 'plat_way_id', v: String(Math.abs(newId)) },
-        ...tags,
-      ],
-    };
     set({
-      ways: [...state.ways, newWay],
+      ways: [...state.ways, {
+        id: newId, nodeRefs,
+        tags: [{ k: 'plat_way_id', v: String(Math.abs(newId)) }, ...tags],
+      }],
       nextWayId: newId - 1,
+      ...historyUpdate,
     });
     return newId;
   },
 
-  removeWay: (id) => set((state) => ({
-    ways: state.ways.filter(w => w.id !== id),
-  })),
+  removeWay: (id) => {
+    const state = get();
+    const historyUpdate = pushHistory(state);
+    set({
+      ways: state.ways.filter(w => w.id !== id),
+      ...historyUpdate,
+    });
+  },
 
-  // === 생성 상태 ===
   setIsGenerating: (generating) => set({ isGenerating: generating }),
   setGenerationProgress: (msg) => set({ generationProgress: msg }),
+
+  // === Undo ===
+  undo: () => {
+    const state = get();
+    if (state.historyIndex < 0) return;
+
+    // 현재 상태가 히스토리 끝이면, 현재 상태를 먼저 저장
+    if (state.historyIndex === state.history.length - 1) {
+      const currentSnapshot = saveSnapshot(state);
+      const newHistory = [...state.history, currentSnapshot];
+      set({
+        nodes: state.history[state.historyIndex].nodes,
+        ways: state.history[state.historyIndex].ways,
+        history: newHistory,
+        historyIndex: state.historyIndex - 1,
+      });
+    } else {
+      const snapshot = state.history[state.historyIndex];
+      set({
+        nodes: snapshot.nodes,
+        ways: snapshot.ways,
+        historyIndex: state.historyIndex - 1,
+      });
+    }
+  },
+
+  // === Redo ===
+  redo: () => {
+    const state = get();
+    if (state.historyIndex >= state.history.length - 2) return;
+
+    const snapshot = state.history[state.historyIndex + 2];
+    set({
+      nodes: snapshot.nodes,
+      ways: snapshot.ways,
+      historyIndex: state.historyIndex + 1,
+    });
+  },
+
+  canUndo: () => get().historyIndex >= 0,
+  canRedo: () => get().historyIndex < get().history.length - 2,
 }));
